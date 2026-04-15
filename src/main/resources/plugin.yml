@@ -1,0 +1,24 @@
+name: SwagSlayer
+main: com.swag.swagslayer.SwagSlayer
+version: 1.0-SNAPSHOT
+api-version: "1.21"
+description: Custom slayer progression system.
+author: Swag
+
+commands:
+  slayer:
+    description: View your slayer stats.
+    usage: /slayer [player]
+    permission: swagslayer.use
+  slayadmin:
+    description: Admin commands for SwagSlayer.
+    usage: /slayadmin <reload|setlevel|addxp|reset> [args...]
+    permission: swagslayer.admin
+
+permissions:
+  swagslayer.use:
+    description: Allows use of /slayer.
+    default: true
+  swagslayer.admin:
+    description: Allows use of /slayadmin and admin features.
+    default: op

@@ -1,0 +1,57 @@
+general:
+  max_level: 5
+  # How many seconds without a kill before the combo streak resets.
+  combo_timeout_seconds: 10
+  # Each streak kill adds this fraction to the XP multiplier (e.g. 0.1 = +10% per kill, capped at 2.0x).
+  combo_multiplier_per_streak: 0.1
+
+slayer_types:
+  ZOMBIE:
+    display_name: "Zombie Slayer"
+    # Vanilla EntityType string for the boss mob spawned at max streak.
+    boss_mob: "ZOMBIE"
+    # Kills required to level up from level N to N+1 (one entry per level, length == max_level).
+    kill_threshold_per_level:
+      - 20
+      - 50
+      - 100
+      - 200
+      - 500
+    xp_per_kill: 10
+    boss_xp_reward: 100
+
+  SPIDER:
+    display_name: "Spider Slayer"
+    boss_mob: "SPIDER"
+    kill_threshold_per_level:
+      - 20
+      - 50
+      - 100
+      - 200
+      - 500
+    xp_per_kill: 10
+    boss_xp_reward: 100
+
+  SKELETON:
+    display_name: "Skeleton Slayer"
+    boss_mob: "SKELETON"
+    kill_threshold_per_level:
+      - 20
+      - 50
+      - 100
+      - 200
+      - 500
+    xp_per_kill: 10
+    boss_xp_reward: 100
+
+  CREEPER:
+    display_name: "Creeper Slayer"
+    boss_mob: "CREEPER"
+    kill_threshold_per_level:
+      - 20
+      - 50
+      - 100
+      - 200
+      - 500
+    xp_per_kill: 10
+    boss_xp_reward: 100
