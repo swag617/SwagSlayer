@@ -1,6 +1,7 @@
 package com.swag.swagslayer.managers;
 
 import com.swag.swagslayer.SwagSlayer;
+import com.swag.swagslayer.models.Contract;
 import com.swag.swagslayer.models.SlayerProfile;
 import com.swag.swagslayer.models.SlayerTask;
 import com.swag.swagslayer.models.SlayerType;
@@ -20,18 +21,15 @@ import java.util.*;
  * Creates, tracks, and closes all SwagSlayer GUI inventories.
  *
  * Tracking design:
- *   GUIManager holds two maps keyed by Inventory reference:
- *     - guiTypes:        Inventory -> GUIType  (what kind of screen is open)
+ *   GUIManager holds maps keyed by Inventory reference:
+ *     - guiTypes:        Inventory -> GUIType
  *     - guiContext:      Inventory -> SlayerType (which type a detail/leaderboard
  *                        screen is showing; null for main menu / overall leaderboard)
  *     - leaderboardBack: Inventory -> SlayerType (null = back goes to main menu,
  *                        non-null = back goes to that type's detail view)
  *
- *   Inventories are removed from both maps in removeTracking(), called by
+ *   Inventories are removed from all maps in removeTracking(), called by
  *   GUIListener.onInventoryClose().
- *
- * All GUI construction happens on the main thread (inventories are always
- * opened from command/click handlers which run on the main thread).
  */
 public class GUIManager {
 
@@ -42,7 +40,9 @@ public class GUIManager {
     public enum GUIType {
         MAIN_MENU,
         TYPE_DETAIL,
-        LEADERBOARD
+        LEADERBOARD,
+        BESTIARY,
+        CONTRACTS
     }
 
     // -------------------------------------------------------------------------
@@ -58,11 +58,11 @@ public class GUIManager {
         TYPE_MATERIAL.put(SlayerType.CREEPER,  Material.GUNPOWDER);
     }
 
-    // Slots in the main menu that correspond to each type (in enum declaration order).
-    private static final int[] TYPE_SLOTS = {10, 12, 14, 16};
-    // Ordered list matching TYPE_SLOTS index to SlayerType.
+    private static final int[] TYPE_SLOTS    = {10, 12, 14, 16};
     private static final SlayerType[] ORDERED_TYPES = SlayerType.values();
-    // Maximum leaderboard entries to display.
+    // Number of types we can safely display — capped so adding a 5th SlayerType
+    // before updating TYPE_SLOTS doesn't cause an ArrayIndexOutOfBoundsException.
+    private static final int DISPLAYABLE_TYPES = Math.min(ORDERED_TYPES.length, TYPE_SLOTS.length);
     private static final int TOP_SIZE = 10;
 
     // -------------------------------------------------------------------------
@@ -72,19 +72,16 @@ public class GUIManager {
     private final SwagSlayer plugin;
     private final DataManager dataManager;
     private final LeaderboardManager leaderboardManager;
-    private SlayerManager slayerManager; // set after construction to avoid circular dependency
 
-    /** Maps each open SwagSlayer inventory to its type. */
-    private final Map<Inventory, GUIType> guiTypes = new HashMap<>();
-    /**
-     * For TYPE_DETAIL and LEADERBOARD screens, stores which SlayerType is being
-     * shown. Null entry = main menu or overall leaderboard.
-     */
-    private final Map<Inventory, SlayerType> guiContext = new HashMap<>();
-    /**
-     * For LEADERBOARD screens only: stores where the Back button should navigate.
-     * Null = back to main menu. Non-null = back to that type's detail screen.
-     */
+    // Setter-injected to avoid circular dependency.
+    private SlayerManager slayerManager;
+    private BossManager bossManager;
+    private BestiaryManager bestiaryManager;
+    private ContractManager contractManager;
+    private PerkManager perkManager;
+
+    private final Map<Inventory, GUIType>    guiTypes        = new HashMap<>();
+    private final Map<Inventory, SlayerType> guiContext      = new HashMap<>();
     private final Map<Inventory, SlayerType> leaderboardBack = new HashMap<>();
 
     // -------------------------------------------------------------------------
@@ -95,31 +92,31 @@ public class GUIManager {
         this.leaderboardManager = leaderboardManager;
     }
 
-    public void setSlayerManager(SlayerManager slayerManager) {
-        this.slayerManager = slayerManager;
-    }
+    public void setSlayerManager(SlayerManager slayerManager)       { this.slayerManager    = slayerManager; }
+    public void setBossManager(BossManager bossManager)             { this.bossManager      = bossManager; }
+    public void setBestiaryManager(BestiaryManager bestiaryManager) { this.bestiaryManager  = bestiaryManager; }
+    public void setContractManager(ContractManager contractManager)  { this.contractManager  = contractManager; }
+    public void setPerkManager(PerkManager perkManager)             { this.perkManager      = perkManager; }
 
     // -------------------------------------------------------------------------
     // Public API — open screens
     // -------------------------------------------------------------------------
 
-    /**
-     * Opens the main slayer menu for the player.
-     */
     public void openMainMenu(Player player) {
-        Inventory inv = Bukkit.createInventory(null, 54, ChatColor.GOLD + "" + ChatColor.BOLD + "SwagSlayer Menu");
+        Inventory inv = Bukkit.createInventory(null, 54,
+                ChatColor.GOLD + "" + ChatColor.BOLD + "SwagSlayer Menu");
         SlayerProfile profile = dataManager.getProfile(player.getUniqueId());
 
         fillBorder(inv);
 
-        // Type items at slots 10, 12, 14, 16.
-        for (int i = 0; i < ORDERED_TYPES.length; i++) {
+        // Type icons at slots 10, 12, 14, 16.
+        for (int i = 0; i < DISPLAYABLE_TYPES; i++) {
             SlayerType type = ORDERED_TYPES[i];
-            int level  = profile.getLevel(type);
-            int xp     = profile.getXp(type);
-            int kills  = profile.getKillCount(type);
+            int level = profile.getLevel(type);
+            int xp    = profile.getXp(type);
+            int kills = profile.getKillCount(type);
 
-            ItemStack item = buildItem(
+            inv.setItem(TYPE_SLOTS[i], buildItem(
                     TYPE_MATERIAL.getOrDefault(type, Material.BARRIER),
                     ChatColor.YELLOW + type.getDisplayName(),
                     Arrays.asList(
@@ -128,9 +125,22 @@ public class GUIManager {
                             ChatColor.GRAY + "Kills: " + ChatColor.WHITE + kills,
                             ChatColor.DARK_GRAY + "Click to view details"
                     )
-            );
-            inv.setItem(TYPE_SLOTS[i], item);
+            ));
         }
+
+        // Contracts button at slot 22.
+        inv.setItem(22, buildItem(
+                Material.CLOCK,
+                ChatColor.GREEN + "" + ChatColor.BOLD + "Contracts",
+                Collections.singletonList(ChatColor.GRAY + "View your daily & weekly contracts")
+        ));
+
+        // Bestiary button at slot 31.
+        inv.setItem(31, buildItem(
+                Material.BOOK,
+                ChatColor.LIGHT_PURPLE + "" + ChatColor.BOLD + "Bestiary",
+                Collections.singletonList(ChatColor.GRAY + "View your kill milestones & rewards")
+        ));
 
         // Leaderboard button at slot 49.
         inv.setItem(49, buildItem(
@@ -143,9 +153,6 @@ public class GUIManager {
         player.openInventory(inv);
     }
 
-    /**
-     * Opens the detail view for a single SlayerType.
-     */
     public void openTypeMenu(Player player, SlayerType type) {
         String title = ChatColor.GOLD + "" + ChatColor.BOLD + type.getDisplayName();
         Inventory inv = Bukkit.createInventory(null, 54, title);
@@ -153,32 +160,74 @@ public class GUIManager {
 
         fillBorder(inv);
 
-        int maxLevel = plugin.getConfig().getInt("general.max_level", 5);
-        int level    = profile.getLevel(type);
-        int xp       = profile.getXp(type);
-        int kills    = profile.getKillCount(type);
-        float progress = profile.getLevelProgress(type);
-        int killsLeft  = profile.getKillsForNextLevel(type);
+        int maxLevel    = plugin.getConfig().getInt("general.max_level", 5);
+        int level       = profile.getLevel(type);
+        int xp          = profile.getXp(type);
+        int kills       = profile.getKillCount(type);
+        float progress  = profile.getLevelProgress(type);
+        int killsLeft   = profile.getKillsForNextLevel(type);
 
-        // Progress bar: 20 chars, █ filled §a, ░ remainder §7.
         String progressBar = buildProgressBar(progress);
-
         String levelProgressLine = (level >= maxLevel)
                 ? ChatColor.GREEN + "MAX LEVEL"
                 : ChatColor.GRAY + "Kills to next level: " + ChatColor.WHITE + killsLeft;
 
+        // Build lore for type icon, appending any unlocked perks.
+        List<String> iconLore = new ArrayList<>(Arrays.asList(
+                ChatColor.GRAY + "XP: " + ChatColor.WHITE + xp,
+                ChatColor.GRAY + "Progress: " + progressBar,
+                ChatColor.GRAY + "Total kills: " + ChatColor.WHITE + kills,
+                levelProgressLine
+        ));
+        if (perkManager != null) {
+            for (int lvl = 2; lvl <= level; lvl++) {
+                String desc = perkManager.getPerkDescription(type, lvl);
+                if (desc != null) {
+                    iconLore.add(ChatColor.GOLD + "Perk Lv" + lvl + ": " + ChatColor.YELLOW + desc);
+                }
+            }
+        }
+
         // Type icon at slot 13.
-        ItemStack icon = buildItem(
+        inv.setItem(13, buildItem(
                 TYPE_MATERIAL.getOrDefault(type, Material.BARRIER),
-                ChatColor.YELLOW + type.getDisplayName() + " " + ChatColor.GRAY + "- " + ChatColor.WHITE + "Level " + level,
-                Arrays.asList(
-                        ChatColor.GRAY + "XP: " + ChatColor.WHITE + xp,
-                        ChatColor.GRAY + "Progress: " + progressBar,
-                        ChatColor.GRAY + "Total kills: " + ChatColor.WHITE + kills,
-                        levelProgressLine
-                )
-        );
-        inv.setItem(13, icon);
+                ChatColor.YELLOW + type.getDisplayName() + " " + ChatColor.GRAY + "- "
+                        + ChatColor.WHITE + "Level " + level,
+                iconLore
+        ));
+
+        // Boss summon button at slot 11.
+        if (bossManager != null) {
+            boolean hasActiveBoss = bossManager.isActiveBossForType(player.getUniqueId(), type);
+            if (hasActiveBoss) {
+                inv.setItem(11, buildItem(
+                        Material.WITHER_SKELETON_SKULL,
+                        ChatColor.RED + "Boss Active",
+                        Collections.singletonList(ChatColor.GRAY + "Defeat your existing boss first!")
+                ));
+            } else if (level < BossManager.MIN_LEVEL_FOR_BOSS) {
+                inv.setItem(11, buildItem(
+                        Material.WITHER_SKELETON_SKULL,
+                        ChatColor.DARK_GRAY + "Summon Boss",
+                        Arrays.asList(
+                                ChatColor.RED + "Requires " + type.getDisplayName()
+                                        + " Level " + BossManager.MIN_LEVEL_FOR_BOSS,
+                                ChatColor.DARK_GRAY + "Keep leveling up to unlock"
+                        )
+                ));
+            } else {
+                inv.setItem(11, buildItem(
+                        Material.WITHER_SKELETON_SKULL,
+                        ChatColor.RED + "" + ChatColor.BOLD + "Summon Boss",
+                        Arrays.asList(
+                                ChatColor.GRAY + "Spawn a scaled boss near you",
+                                ChatColor.GRAY + "HP: " + ChatColor.WHITE + (40 * level),
+                                ChatColor.GRAY + "Expires in " + ChatColor.WHITE + "5 minutes",
+                                ChatColor.YELLOW + "Click to summon!"
+                        )
+                ));
+            }
+        }
 
         // Task button at slot 29.
         SlayerTask activeTask = profile.getActiveTask(type);
@@ -217,23 +266,10 @@ public class GUIManager {
         player.openInventory(inv);
     }
 
-    /**
-     * Opens a leaderboard view.
-     *
-     * @param type null for the overall leaderboard; non-null for a type-specific board.
-     * @param backType where the Back button should navigate. Pass null if coming from
-     *                 the main menu, or the SlayerType if coming from a detail screen.
-     */
     public void openLeaderboard(Player player, SlayerType type) {
-        // "Back" destination is null → main menu when type is null (overall),
-        // and equals type → detail view when type is non-null.
         openLeaderboardWithBack(player, type, type);
     }
 
-    /**
-     * Internal open that lets callers specify the back-destination independently.
-     * Exposed package-private so GUIListener can call it with the correct context.
-     */
     public void openLeaderboardWithBack(Player player, SlayerType type, SlayerType backDest) {
         String boardLabel = (type == null) ? "Overall" : type.getDisplayName();
         String title = ChatColor.GOLD + "" + ChatColor.BOLD + "Leaderboard"
@@ -242,14 +278,11 @@ public class GUIManager {
 
         fillBorder(inv);
 
-        // Fetch entries.
         List<LeaderboardManager.LeaderboardEntry> entries = (type == null)
                 ? leaderboardManager.getTopOverall(TOP_SIZE)
                 : leaderboardManager.getTopForType(type, TOP_SIZE);
 
-        // Slot layout: entries 1-7 in slots 10-16, entries 8-10 in slots 19-21.
         int[] entrySlots = {10, 11, 12, 13, 14, 15, 16, 19, 20, 21};
-
         for (int i = 0; i < entries.size() && i < entrySlots.length; i++) {
             LeaderboardManager.LeaderboardEntry entry = entries.get(i);
             int rank = i + 1;
@@ -259,26 +292,77 @@ public class GUIManager {
             if (skull != null) {
                 skull.setOwningPlayer(Bukkit.getOfflinePlayer(entry.getUuid()));
                 skull.setDisplayName(ChatColor.YELLOW + "#" + rank + " " + ChatColor.WHITE + entry.getPlayerName());
-
                 String xpLabel = (type == null) ? "Total XP" : "XP";
                 skull.setLore(Collections.singletonList(
-                        ChatColor.GRAY + xpLabel + ": " + ChatColor.WHITE + entry.getXpValue()
-                ));
+                        ChatColor.GRAY + xpLabel + ": " + ChatColor.WHITE + entry.getXpValue()));
                 skull.addItemFlags(ItemFlag.HIDE_ATTRIBUTES, ItemFlag.HIDE_ENCHANTS);
                 head.setItemMeta(skull);
             }
             inv.setItem(entrySlots[i], head);
         }
 
-        // Back button at slot 49.
-        inv.setItem(49, buildItem(
-                Material.ARROW,
-                ChatColor.GRAY + "Back",
-                Collections.singletonList(ChatColor.DARK_GRAY + "Return to previous menu")
-        ));
+        inv.setItem(49, buildItem(Material.ARROW, ChatColor.GRAY + "Back",
+                Collections.singletonList(ChatColor.DARK_GRAY + "Return to previous menu")));
 
         track(inv, GUIType.LEADERBOARD, type);
         leaderboardBack.put(inv, backDest);
+        player.openInventory(inv);
+    }
+
+    /**
+     * Opens the bestiary overview, showing kill milestones for each SlayerType.
+     */
+    public void openBestiary(Player player) {
+        Inventory inv = Bukkit.createInventory(null, 54,
+                ChatColor.LIGHT_PURPLE + "" + ChatColor.BOLD + "Bestiary");
+        SlayerProfile profile = dataManager.getProfile(player.getUniqueId());
+
+        fillBorder(inv);
+
+        for (int i = 0; i < DISPLAYABLE_TYPES; i++) {
+            SlayerType type = ORDERED_TYPES[i];
+            List<String> lore = (bestiaryManager != null)
+                    ? bestiaryManager.buildLore(profile, type)
+                    : Collections.singletonList(ChatColor.RED + "Bestiary unavailable");
+
+            inv.setItem(TYPE_SLOTS[i], buildItem(
+                    TYPE_MATERIAL.getOrDefault(type, Material.BARRIER),
+                    ChatColor.YELLOW + type.getDisplayName(),
+                    lore
+            ));
+        }
+
+        inv.setItem(49, buildItem(Material.ARROW, ChatColor.GRAY + "Back",
+                Collections.singletonList(ChatColor.DARK_GRAY + "Return to main menu")));
+
+        track(inv, GUIType.BESTIARY, null);
+        player.openInventory(inv);
+    }
+
+    /**
+     * Opens the contracts screen showing the player's daily and weekly contracts.
+     */
+    public void openContracts(Player player) {
+        Inventory inv = Bukkit.createInventory(null, 54,
+                ChatColor.GREEN + "" + ChatColor.BOLD + "Contracts");
+
+        fillBorder(inv);
+
+        if (contractManager != null) {
+            Contract daily  = contractManager.getDailyContract(player.getUniqueId());
+            Contract weekly = contractManager.getWeeklyContract(player.getUniqueId());
+
+            inv.setItem(20, buildContractItem(daily, false));
+            inv.setItem(24, buildContractItem(weekly, true));
+        } else {
+            inv.setItem(22, buildItem(Material.BARRIER, ChatColor.RED + "Contracts unavailable",
+                    Collections.emptyList()));
+        }
+
+        inv.setItem(49, buildItem(Material.ARROW, ChatColor.GRAY + "Back",
+                Collections.singletonList(ChatColor.DARK_GRAY + "Return to main menu")));
+
+        track(inv, GUIType.CONTRACTS, null);
         player.openInventory(inv);
     }
 
@@ -286,55 +370,31 @@ public class GUIManager {
     // Tracking
     // -------------------------------------------------------------------------
 
-    /** Returns true if the given inventory is a tracked SwagSlayer GUI. */
     public boolean isSwagSlayerGUI(Inventory inv) {
         return guiTypes.containsKey(inv);
     }
 
-    /** Returns the GUIType for a tracked inventory, or null if not tracked. */
     public GUIType getGUIType(Inventory inv) {
         return guiTypes.get(inv);
     }
 
-    /**
-     * Returns the SlayerType context for a TYPE_DETAIL or LEADERBOARD inventory.
-     * Null if the screen is for "main menu" or "overall leaderboard".
-     */
     public SlayerType getGUIContext(Inventory inv) {
         return guiContext.get(inv);
     }
 
-    /**
-     * For a LEADERBOARD inventory, returns where the Back button should navigate.
-     * Null = go to main menu. Non-null = go to that type's detail view.
-     */
     public SlayerType getLeaderboardBack(Inventory inv) {
         return leaderboardBack.get(inv);
     }
 
-    /**
-     * Removes all tracking for the given inventory.
-     * Called by GUIListener when any SwagSlayer inventory is closed.
-     */
     public void removeTracking(Inventory inv) {
         guiTypes.remove(inv);
         guiContext.remove(inv);
         leaderboardBack.remove(inv);
     }
 
-    // -------------------------------------------------------------------------
-    // Helper: slot -> SlayerType for the main menu
-    // -------------------------------------------------------------------------
-
-    /**
-     * Given a click slot in the main menu, returns the corresponding SlayerType,
-     * or null if the slot is not a type icon.
-     */
     public SlayerType getTypeForMainMenuSlot(int slot) {
         for (int i = 0; i < TYPE_SLOTS.length; i++) {
-            if (TYPE_SLOTS[i] == slot) {
-                return ORDERED_TYPES[i];
-            }
+            if (TYPE_SLOTS[i] == slot) return ORDERED_TYPES[i];
         }
         return null;
     }
@@ -345,62 +405,58 @@ public class GUIManager {
 
     private void track(Inventory inv, GUIType type, SlayerType context) {
         guiTypes.put(inv, type);
-        if (context != null) {
-            guiContext.put(inv, context);
-        }
+        if (context != null) guiContext.put(inv, context);
     }
 
-    /**
-     * Fills the border slots of a 54-slot inventory with black glass panes.
-     *
-     * Border = top row (0-8), bottom row (45-53), left column (9,18,27,36),
-     * right column (17,26,35,44).
-     */
     private void fillBorder(Inventory inv) {
         ItemStack pane = buildItem(Material.BLACK_STAINED_GLASS_PANE, " ", Collections.emptyList());
-
-        // Top row.
-        for (int i = 0; i <= 8; i++) inv.setItem(i, pane);
-        // Bottom row.
+        for (int i = 0;  i <= 8;  i++) inv.setItem(i, pane);
         for (int i = 45; i <= 53; i++) inv.setItem(i, pane);
-        // Left column (excluding corners already set above).
-        for (int i = 9; i <= 36; i += 9) inv.setItem(i, pane);
-        // Right column (excluding corners).
+        for (int i = 9;  i <= 36; i += 9) inv.setItem(i, pane);
         for (int i = 17; i <= 44; i += 9) inv.setItem(i, pane);
     }
 
-    /**
-     * Constructs a clean ItemStack with a display name, lore, and hidden attribute
-     * / enchant flags.
-     */
     private ItemStack buildItem(Material material, String displayName, List<String> lore) {
         ItemStack item = new ItemStack(material);
         ItemMeta meta = item.getItemMeta();
         if (meta != null) {
             meta.setDisplayName(displayName);
-            if (!lore.isEmpty()) {
-                meta.setLore(lore);
-            }
+            if (!lore.isEmpty()) meta.setLore(lore);
             meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES, ItemFlag.HIDE_ENCHANTS);
             item.setItemMeta(meta);
         }
         return item;
     }
 
-    /**
-     * Builds a 20-character XP progress bar.
-     * Filled portion: §a█, empty portion: §7░.
-     */
+    private ItemStack buildContractItem(Contract c, boolean weekly) {
+        String label  = weekly ? "Weekly Contract" : "Daily Contract";
+        Material mat  = weekly ? Material.AMETHYST_SHARD : Material.CLOCK;
+        ChatColor col = weekly ? ChatColor.LIGHT_PURPLE : ChatColor.GREEN;
+
+        List<String> lore = new ArrayList<>();
+        lore.add(ChatColor.GRAY + "Type: " + ChatColor.WHITE + c.getType().getDisplayName());
+        lore.add(ChatColor.GRAY + "Goal: " + ChatColor.WHITE + c.getKillGoal() + " kills");
+        lore.add(ChatColor.GRAY + "Progress: " + ChatColor.WHITE + c.getKillsCompleted()
+                + ChatColor.GRAY + "/" + ChatColor.WHITE + c.getKillGoal());
+        lore.add(ChatColor.GRAY + "Reward: " + ChatColor.GOLD + c.getXpReward() + " XP");
+
+        if (c.isCompleted()) {
+            lore.add(ChatColor.GREEN + "COMPLETED!");
+        } else {
+            lore.add(ChatColor.GRAY + "Resets in: " + ChatColor.WHITE + c.getTimeRemainingString());
+        }
+
+        return buildItem(mat, col + "" + ChatColor.BOLD + label, lore);
+    }
+
     private String buildProgressBar(float progress) {
         int total  = 20;
-        int filled = Math.round(progress * total);
-        filled = Math.max(0, Math.min(total, filled));
-
+        int filled = Math.max(0, Math.min(total, Math.round(progress * total)));
         StringBuilder bar = new StringBuilder();
         bar.append(ChatColor.GREEN);
-        for (int i = 0; i < filled; i++) bar.append('\u2588'); // █
+        for (int i = 0; i < filled;  i++) bar.append('\u2588');
         bar.append(ChatColor.GRAY);
-        for (int i = filled; i < total; i++) bar.append('\u2591'); // ░
+        for (int i = filled; i < total; i++) bar.append('\u2591');
         return bar.toString();
     }
 }

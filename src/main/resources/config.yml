@@ -6,20 +6,23 @@ general:
   combo_multiplier_per_streak: 0.1
 
 slayer_types:
+  # --- Easiest --- Common overworld mob, quick grind, low XP reward.
   ZOMBIE:
     display_name: "Zombie Slayer"
-    # Vanilla EntityType string for the boss mob spawned at max streak.
+    # Vanilla EntityType string for the boss mob spawned via the GUI summon button.
     boss_mob: "ZOMBIE"
-    # Kills required to level up from level N to N+1 (one entry per level, length == max_level).
+    # Kills required to advance from level N to N+1. Only the first (max_level - 1)
+    # entries are used; any extras are ignored.
     kill_threshold_per_level:
-      - 20
-      - 50
-      - 100
-      - 200
-      - 500
-    xp_per_kill: 10
-    boss_xp_reward: 100
+      - 15
+      - 40
+      - 80
+      - 150
+      - 300
+    xp_per_kill: 8
+    boss_xp_reward: 80
 
+  # --- Medium --- Cave and surface mob, moderate challenge.
   SPIDER:
     display_name: "Spider Slayer"
     boss_mob: "SPIDER"
@@ -28,30 +31,32 @@ slayer_types:
       - 50
       - 100
       - 200
-      - 500
+      - 400
     xp_per_kill: 10
-    boss_xp_reward: 100
+    boss_xp_reward: 120
 
+  # --- Harder --- Ranged attacker, higher XP reward for the risk.
   SKELETON:
     display_name: "Skeleton Slayer"
     boss_mob: "SKELETON"
     kill_threshold_per_level:
-      - 20
-      - 50
-      - 100
-      - 200
+      - 25
+      - 60
+      - 120
+      - 250
       - 500
-    xp_per_kill: 10
-    boss_xp_reward: 100
+    xp_per_kill: 12
+    boss_xp_reward: 150
 
+  # --- Hardest --- Explosive mob, highest XP but most dangerous grind.
   CREEPER:
     display_name: "Creeper Slayer"
     boss_mob: "CREEPER"
     kill_threshold_per_level:
-      - 20
-      - 50
-      - 100
-      - 200
-      - 500
-    xp_per_kill: 10
-    boss_xp_reward: 100
+      - 30
+      - 70
+      - 150
+      - 300
+      - 600
+    xp_per_kill: 15
+    boss_xp_reward: 200

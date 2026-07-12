@@ -8,7 +8,6 @@ import org.bukkit.configuration.file.YamlConfiguration;
 
 import java.io.File;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Builds and caches top-10 leaderboards per SlayerType and an overall board.
@@ -67,11 +66,12 @@ public class LeaderboardManager {
     private final File dataFolder;
 
     /**
-     * Cached boards. Written on main thread after async scan completes.
-     * Use volatile references so the main thread always reads the latest swap.
+     * Cached boards. Both reads and writes happen exclusively on the main server
+     * thread (reads via GUI events, writes via runTask callback after async scan),
+     * so no concurrent access or volatile semantics are needed.
      */
-    private volatile List<LeaderboardEntry> overallBoard = Collections.emptyList();
-    private final Map<SlayerType, List<LeaderboardEntry>> typeBoards = new ConcurrentHashMap<>();
+    private List<LeaderboardEntry> overallBoard = Collections.emptyList();
+    private final Map<SlayerType, List<LeaderboardEntry>> typeBoards = new HashMap<>();
 
     public LeaderboardManager(SwagSlayer plugin, DataManager dataManager) {
         this.plugin = plugin;
@@ -208,8 +208,10 @@ public class LeaderboardManager {
      * Resolves a display name for a UUID. Falls back to a shortened UUID string
      * if the player has never joined this server (getName() returns null).
      *
-     * NOTE: Bukkit.getOfflinePlayer() is safe to call from async threads —
-     * it only performs a name lookup from the usercache, not Bukkit state mutation.
+     * Called from the async scan thread. Bukkit.getOfflinePlayer(UUID) performs
+     * a user-cache file lookup and does not touch Bukkit's live player list,
+     * making it safe in practice on Paper 1.21.1, though not formally documented
+     * as async-safe.
      */
     private String resolveName(UUID uuid) {
         OfflinePlayer op = Bukkit.getOfflinePlayer(uuid);

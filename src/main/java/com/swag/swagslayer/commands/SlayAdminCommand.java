@@ -207,15 +207,23 @@ public class SlayAdminCommand implements CommandExecutor, TabCompleter {
     }
 
     /**
-     * Parses a positive integer or sends an error and returns -1.
+     * Parses a non-negative integer. Sends a descriptive error and returns -1
+     * on both parse failure AND negative input, so the caller's {@code if (x < 0) return}
+     * guard always produces visible feedback rather than a silent no-op.
      */
     private int parseInt(CommandSender sender, String s) {
+        int value;
         try {
-            return Integer.parseInt(s);
+            value = Integer.parseInt(s);
         } catch (NumberFormatException e) {
             sender.sendMessage(ChatColor.RED + "'" + s + "' is not a valid integer.");
             return -1;
         }
+        if (value < 0) {
+            sender.sendMessage(ChatColor.RED + "Value must be a positive integer (got " + value + ").");
+            return -1;
+        }
+        return value;
     }
 
     // -------------------------------------------------------------------------

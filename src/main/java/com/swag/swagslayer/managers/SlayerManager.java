@@ -7,6 +7,7 @@ import com.swag.swagslayer.models.SlayerType;
 import org.bukkit.ChatColor;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.entity.EntityType;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 
 import java.util.HashMap;
@@ -15,23 +16,23 @@ import java.util.Random;
 import java.util.UUID;
 
 /**
- * Core slayer logic: kill handling, XP calculation, combo streaks, and
- * config value application to SlayerType enum constants.
+ * Core slayer logic: kill handling, XP awards, combo streaks, task assignment,
+ * and config value application to SlayerType enum constants.
  *
- * Combo system:
- *   - Each kill within combo_timeout_seconds of the last kill increments the streak.
- *   - The XP multiplier is 1.0 + (streak * combo_multiplier_per_streak), capped at 2.0.
- *   - The streak is per-player and per-type-agnostic (any slayer kill keeps the streak alive).
+ * awardXp() is the single point of truth for giving XP with level-up feedback.
+ * Both BossManager and ContractManager delegate to it so level-up messages and
+ * perk notifications are never silently dropped.
  */
 public class SlayerManager {
 
     private final SwagSlayer plugin;
     private final DataManager dataManager;
 
-    /** Current consecutive kill streak per player. */
-    private final Map<UUID, Integer> streakCount = new HashMap<>();
-    /** Timestamp (ms) of the last qualifying kill per player. */
-    private final Map<UUID, Long> lastKillTime = new HashMap<>();
+    private CosmeticsManager cosmeticsManager;
+    private PerkManager perkManager;
+
+    private final Map<UUID, Integer> streakCount   = new HashMap<>();
+    private final Map<UUID, Long>    lastKillTime  = new HashMap<>();
 
     private final Random random = new Random();
 
@@ -41,16 +42,23 @@ public class SlayerManager {
         applyConfigToTypes();
     }
 
+    public void setCosmeticsManager(CosmeticsManager cosmeticsManager) {
+        this.cosmeticsManager = cosmeticsManager;
+    }
+
+    public void setPerkManager(PerkManager perkManager) {
+        this.perkManager = perkManager;
+    }
+
     // -------------------------------------------------------------------------
     // Config application
     // -------------------------------------------------------------------------
 
     /**
-     * Reads the slayer_types section from config and pushes the values into the
-     * SlayerType enum constants. Called on startup and on /slayadmin reload.
+     * Reads config overrides into SlayerType enum constants.
      *
-     * This allows server operators to change display names, kill thresholds, and
-     * XP values without recompiling the plugin.
+     * Two-phase: validate and collect all changes first, then apply all at once.
+     * This prevents a partial-config state if parsing fails mid-loop.
      */
     public void applyConfigToTypes() {
         ConfigurationSection typesSection = plugin.getConfig().getConfigurationSection("slayer_types");
@@ -59,6 +67,19 @@ public class SlayerManager {
             return;
         }
 
+        int maxLevel = plugin.getConfig().getInt("general.max_level", 5);
+
+        // Phase 1 — collect.
+        record TypeUpdate(
+            String displayName,
+            EntityType bossEntityType,
+            int[] killThresholds,
+            int xpPerKill,
+            int bossXpReward
+        ) {}
+
+        Map<SlayerType, TypeUpdate> pending = new HashMap<>();
+
         for (SlayerType type : SlayerType.values()) {
             ConfigurationSection sec = typesSection.getConfigurationSection(type.name());
             if (sec == null) {
@@ -66,31 +87,67 @@ public class SlayerManager {
                 continue;
             }
 
-            String displayName = sec.getString("display_name", type.getDisplayName());
-            type.setDisplayName(displayName);
+            String newDisplayName = sec.getString("display_name", type.getDisplayName());
 
-            String bossMobStr = sec.getString("boss_mob", type.name());
+            String bossMobStr = sec.getString("boss_mob", type.getBossEntityType().name());
+            EntityType newBossType;
             try {
-                EntityType et = EntityType.valueOf(bossMobStr.toUpperCase());
-                type.setBossEntityType(et);
+                newBossType = EntityType.valueOf(bossMobStr.toUpperCase());
             } catch (IllegalArgumentException e) {
-                plugin.getLogger().warning("Unknown boss_mob '" + bossMobStr + "' for type " + type.name()
-                        + " — keeping previous value.");
+                plugin.getLogger().warning("Unknown boss_mob '" + bossMobStr + "' for type "
+                        + type.name() + " — keeping existing value.");
+                newBossType = type.getBossEntityType();
             }
 
-            // kill_threshold_per_level is a List<Integer> in YAML.
             java.util.List<Integer> thresholdList = sec.getIntegerList("kill_threshold_per_level");
-            int maxLevel = plugin.getConfig().getInt("general.max_level", 5);
+            int[] newThresholds;
             if (!thresholdList.isEmpty()) {
-                int[] thresholds = new int[maxLevel];
+                newThresholds = new int[maxLevel];
                 for (int i = 0; i < maxLevel; i++) {
-                    thresholds[i] = (i < thresholdList.size()) ? thresholdList.get(i) : 100;
+                    newThresholds[i] = (i < thresholdList.size()) ? thresholdList.get(i) : 100;
                 }
-                type.setKillThresholds(thresholds);
+            } else {
+                newThresholds = type.getKillThresholds(); // keep existing
             }
 
-            type.setXpPerKill(sec.getInt("xp_per_kill", type.getXpPerKill()));
-            type.setBossXpReward(sec.getInt("boss_xp_reward", type.getBossXpReward()));
+            int newXpPerKill    = sec.getInt("xp_per_kill",    type.getXpPerKill());
+            int newBossXpReward = sec.getInt("boss_xp_reward", type.getBossXpReward());
+
+            pending.put(type, new TypeUpdate(newDisplayName, newBossType, newThresholds, newXpPerKill, newBossXpReward));
+        }
+
+        // Phase 2 — apply atomically.
+        for (Map.Entry<SlayerType, TypeUpdate> entry : pending.entrySet()) {
+            SlayerType type  = entry.getKey();
+            TypeUpdate update = entry.getValue();
+            type.setDisplayName(update.displayName());
+            type.setBossEntityType(update.bossEntityType());
+            type.setKillThresholds(update.killThresholds());
+            type.setXpPerKill(update.xpPerKill());
+            type.setBossXpReward(update.bossXpReward());
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // XP award — single point of truth
+    // -------------------------------------------------------------------------
+
+    /**
+     * Awards XP to a player and fires level-up feedback if a threshold is crossed.
+     * All subsystems (SlayerManager, BossManager, ContractManager) must use this
+     * method so that level-up messages and perk notifications are never silently dropped.
+     */
+    public void awardXp(Player player, SlayerType type, int amount) {
+        SlayerProfile profile = dataManager.getProfile(player.getUniqueId());
+        boolean leveledUp = profile.addXp(type, amount);
+        if (leveledUp) {
+            int newLevel = profile.getLevel(type);
+            player.sendMessage(ChatColor.GREEN + "" + ChatColor.BOLD + "LEVEL UP! "
+                    + ChatColor.RESET + ChatColor.GREEN
+                    + type.getDisplayName() + " Slayer is now level " + newLevel + "!");
+            if (perkManager != null) {
+                perkManager.notifyLevelUp(player, type, newLevel);
+            }
         }
     }
 
@@ -99,61 +156,46 @@ public class SlayerManager {
     // -------------------------------------------------------------------------
 
     /**
-     * Main entry point called by SlayerListener when a player kills a mob.
-     *
-     * Steps:
-     *   1. Resolve EntityType -> SlayerType (null = not a tracked mob, return early).
-     *   2. Update combo streak.
-     *   3. Increment kill count.
-     *   4. Calculate XP with combo multiplier.
-     *   5. Add XP to profile; if level-up occurs, notify the player.
+     * Called by SlayerListener when a player kills a tracked regular mob.
+     * Do NOT call this for boss entities — BossManager handles those separately.
      */
-    public void handleKill(Player player, EntityType entityType) {
-        SlayerType slayerType = SlayerType.fromEntityType(entityType);
+    public void handleKill(Player player, LivingEntity entity) {
+        SlayerType slayerType = SlayerType.fromEntityType(entity.getType());
         if (slayerType == null) return;
 
         UUID uuid = player.getUniqueId();
         SlayerProfile profile = dataManager.getProfile(uuid);
 
-        // --- Combo streak update ---
         updateStreak(uuid);
         double multiplier = getComboMultiplier(uuid);
+        int streak = getStreak(uuid);
 
-        // --- Kill count ---
         profile.setKillCount(slayerType, profile.getKillCount(slayerType) + 1);
 
-        // --- XP calculation ---
-        int baseXp = slayerType.getXpPerKill();
-        int earnedXp = (int) Math.round(baseXp * multiplier);
+        int earnedXp = (int) Math.round(slayerType.getXpPerKill() * multiplier);
+        awardXp(player, slayerType, earnedXp);
 
-        // --- Level-up check ---
-        boolean leveledUp = profile.addXp(slayerType, earnedXp);
-
-        // --- Level-up feedback ---
-        if (leveledUp) {
-            int newLevel = profile.getLevel(slayerType);
-            player.sendMessage(ChatColor.GREEN + "" + ChatColor.BOLD + "LEVEL UP! "
-                    + ChatColor.RESET + ChatColor.GREEN
-                    + slayerType.getDisplayName() + " Slayer is now level " + newLevel + "!");
-        }
-
-        // --- Task progress ---
+        // Task progress.
         SlayerTask task = profile.getActiveTask(slayerType);
         if (task != null) {
             task.incrementKills();
             if (task.isComplete()) {
                 profile.clearTask(slayerType);
                 int reward = slayerType.getBossXpReward();
-                profile.addXp(slayerType, reward);
+                awardXp(player, slayerType, reward);
                 player.sendMessage(ChatColor.GOLD + "" + ChatColor.BOLD + "Task complete! "
                         + ChatColor.RESET + ChatColor.YELLOW
                         + "You finished your " + slayerType.getDisplayName() + " task and earned "
                         + ChatColor.GOLD + reward + " XP" + ChatColor.YELLOW + "!");
             } else {
                 player.sendMessage(ChatColor.GRAY + "[" + slayerType.getDisplayName() + " Task] "
-                        + ChatColor.WHITE + task.getKillsCompleted() + ChatColor.GRAY + "/"
-                        + ChatColor.WHITE + task.getKillGoal());
+                        + ChatColor.WHITE + task.getKillsCompleted()
+                        + ChatColor.GRAY + "/" + ChatColor.WHITE + task.getKillGoal());
             }
+        }
+
+        if (cosmeticsManager != null) {
+            cosmeticsManager.handleKillCosmetics(player, entity.getLocation(), streak, multiplier);
         }
     }
 
@@ -161,11 +203,6 @@ public class SlayerManager {
     // Task assignment
     // -------------------------------------------------------------------------
 
-    /**
-     * Assigns a new slayer task to the player for the given type.
-     * Does nothing if the player already has an active task for that type.
-     * Kill goal is randomised based on the player's current level.
-     */
     public void assignTask(Player player, SlayerType type) {
         SlayerProfile profile = dataManager.getProfile(player.getUniqueId());
         if (profile.getActiveTask(type) != null) {
@@ -185,7 +222,6 @@ public class SlayerManager {
                 + ChatColor.WHITE + "Kill " + goal + " " + type.getDisplayName() + "s!");
     }
 
-    /** Returns {min, max} kill goal range for the given slayer level. */
     private int[] taskRangeForLevel(int level) {
         return switch (level) {
             case 1  -> new int[]{15,  25};
@@ -200,15 +236,10 @@ public class SlayerManager {
     // Combo streak
     // -------------------------------------------------------------------------
 
-    /**
-     * Updates the streak counter for the given player.
-     * If the time since last kill exceeds the configured timeout, the streak resets to 1.
-     * Otherwise the streak increments by 1.
-     */
     private void updateStreak(UUID uuid) {
-        long now = System.currentTimeMillis();
+        long now      = System.currentTimeMillis();
         long timeoutMs = plugin.getConfig().getLong("general.combo_timeout_seconds", 10) * 1000L;
-        Long last = lastKillTime.get(uuid);
+        Long last     = lastKillTime.get(uuid);
 
         if (last == null || (now - last) > timeoutMs) {
             streakCount.put(uuid, 1);
@@ -218,29 +249,16 @@ public class SlayerManager {
         lastKillTime.put(uuid, now);
     }
 
-    /**
-     * Returns the XP multiplier for the player's current streak.
-     * Formula: 1.0 + (streak * combo_multiplier_per_streak), capped at 2.0.
-     * A streak of 1 (first kill or after timeout) yields exactly 1.0.
-     */
     public double getComboMultiplier(UUID uuid) {
-        int streak = streakCount.getOrDefault(uuid, 1);
+        int streak       = streakCount.getOrDefault(uuid, 1);
         double perStreak = plugin.getConfig().getDouble("general.combo_multiplier_per_streak", 0.1);
-        // Streak of 1 = no bonus (first kill in a chain).
-        double raw = 1.0 + ((streak - 1) * perStreak);
-        return Math.min(2.0, raw);
+        return Math.min(2.0, 1.0 + ((streak - 1) * perStreak));
     }
 
-    /**
-     * Returns the current streak count for a player (1 = no combo active).
-     */
     public int getStreak(UUID uuid) {
         return streakCount.getOrDefault(uuid, 1);
     }
 
-    /**
-     * Cleans up streak state when a player leaves to prevent memory leaks.
-     */
     public void clearStreak(UUID uuid) {
         streakCount.remove(uuid);
         lastKillTime.remove(uuid);

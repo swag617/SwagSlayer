@@ -86,6 +86,8 @@ public class DataManager {
                 profile.setXp(type, yaml.getInt(path + "xp", 0));
                 profile.setKillCount(type, yaml.getInt(path + "kills", 0));
 
+                profile.setBossKills(type, yaml.getInt(path + "boss_kills", 0));
+
                 int taskGoal = yaml.getInt(path + "task.goal", -1);
                 if (taskGoal > 0) {
                     SlayerTask task = new SlayerTask(type, taskGoal);
@@ -112,6 +114,7 @@ public class DataManager {
             yaml.set(path + "level", profile.getLevel(type));
             yaml.set(path + "xp", profile.getXp(type));
             yaml.set(path + "kills", profile.getKillCount(type));
+            yaml.set(path + "boss_kills", profile.getBossKills(type));
 
             SlayerTask task = profile.getActiveTask(type);
             if (task != null) {
