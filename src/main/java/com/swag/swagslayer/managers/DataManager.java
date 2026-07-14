@@ -1,51 +1,43 @@
 package com.swag.swagslayer.managers;
 
 import com.swag.swagslayer.SwagSlayer;
+import com.swag.swagslayer.database.DatabaseManager;
 import com.swag.swagslayer.models.SlayerProfile;
-import com.swag.swagslayer.models.SlayerTask;
-import com.swag.swagslayer.models.SlayerType;
-import org.bukkit.configuration.file.YamlConfiguration;
 
-import java.io.File;
-import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
-import java.util.logging.Level;
 
 /**
- * Manages flat-file YAML persistence for player slayer profiles.
+ * Owns the in-memory SlayerProfile cache. All persistence is delegated to
+ * {@link DatabaseManager}, which stores profiles in SwagAPI's shared database.
  *
- * Storage layout:
- *   plugins/SwagSlayer/data/<uuid>.yml
+ * MIGRATED: this class used to read/write plugins/SwagSlayer/data/&lt;uuid&gt;.yml directly via
+ * YamlConfiguration (one file per player, synchronous I/O on the main thread). It is now a pure
+ * cache layer over the SQL-backed DatabaseManager — see that class for the schema, the
+ * SQLite/MySQL-branched upsert logic, and the one-time legacy-YAML import that runs on first
+ * connect() after this migration.
  *
- * YAML structure per file:
- *   uuid: <string>
- *   slayer:
- *     ZOMBIE:
- *       level: 1
- *       xp: 0
- *       kills: 0
- *     SPIDER:
- *       ...
- *
- * All I/O is synchronous on the main thread. This is acceptable for the
- * initial implementation and will be migrated to async when SQLite is added.
+ * Public API is unchanged from the YAML-based version so call sites (SlayerListener, GUIManager,
+ * SlayerManager, PerkManager, BossManager, ContractManager, commands) did not need to change.
  */
 public class DataManager {
 
     private final SwagSlayer plugin;
-    private final File dataFolder;
+    private final DatabaseManager databaseManager;
 
     /** In-memory cache. Populated on first access (player join or command lookup). */
     private final Map<UUID, SlayerProfile> profileCache = new HashMap<>();
 
-    public DataManager(SwagSlayer plugin) {
+    public DataManager(SwagSlayer plugin, DatabaseManager databaseManager) {
         this.plugin = plugin;
-        this.dataFolder = new File(plugin.getDataFolder(), "data");
-        if (!dataFolder.exists() && !dataFolder.mkdirs()) {
-            plugin.getLogger().warning("Could not create data directory: " + dataFolder.getAbsolutePath());
-        }
+        this.databaseManager = databaseManager;
+    }
+
+    /** Exposes the underlying SQL persistence layer for managers that need direct DB access
+     *  (ContractManager, LeaderboardManager) without duplicating a second DatabaseManager. */
+    public DatabaseManager getDatabaseManager() {
+        return databaseManager;
     }
 
     // -------------------------------------------------------------------------
@@ -53,7 +45,7 @@ public class DataManager {
     // -------------------------------------------------------------------------
 
     /**
-     * Returns the profile for the given UUID, loading from disk if not cached.
+     * Returns the profile for the given UUID, loading from the database if not cached.
      * Never returns null — creates a new profile if none exists.
      */
     public SlayerProfile getProfile(UUID uuid) {
@@ -66,71 +58,19 @@ public class DataManager {
     }
 
     /**
-     * Loads the profile from disk. If no file exists, returns a fresh profile.
-     * The returned profile is NOT automatically added to the cache — callers
-     * should use getProfile() for normal access.
+     * Loads the profile from the database. If no rows exist, returns a fresh profile.
+     * The returned profile is NOT automatically added to the cache — callers should use
+     * getProfile() for normal access.
      */
     public SlayerProfile loadProfile(UUID uuid) {
-        File file = profileFile(uuid);
-        if (!file.exists()) {
-            return new SlayerProfile(uuid);
-        }
-
-        YamlConfiguration yaml = YamlConfiguration.loadConfiguration(file);
-        SlayerProfile profile = new SlayerProfile(uuid);
-
-        if (yaml.isConfigurationSection("slayer")) {
-            for (SlayerType type : SlayerType.values()) {
-                String path = "slayer." + type.name() + ".";
-                profile.setLevel(type, yaml.getInt(path + "level", 1));
-                profile.setXp(type, yaml.getInt(path + "xp", 0));
-                profile.setKillCount(type, yaml.getInt(path + "kills", 0));
-
-                profile.setBossKills(type, yaml.getInt(path + "boss_kills", 0));
-
-                int taskGoal = yaml.getInt(path + "task.goal", -1);
-                if (taskGoal > 0) {
-                    SlayerTask task = new SlayerTask(type, taskGoal);
-                    task.setKillsCompleted(yaml.getInt(path + "task.completed", 0));
-                    profile.setActiveTask(type, task);
-                }
-            }
-        }
-
-        return profile;
+        return databaseManager.loadProfile(uuid);
     }
 
     /**
-     * Persists the given profile to disk, overwriting any existing file.
+     * Persists the given profile to the database, upserting all SlayerType rows.
      */
     public void saveProfile(SlayerProfile profile) {
-        File file = profileFile(profile.getPlayerUuid());
-        YamlConfiguration yaml = new YamlConfiguration();
-
-        yaml.set("uuid", profile.getPlayerUuid().toString());
-
-        for (SlayerType type : SlayerType.values()) {
-            String path = "slayer." + type.name() + ".";
-            yaml.set(path + "level", profile.getLevel(type));
-            yaml.set(path + "xp", profile.getXp(type));
-            yaml.set(path + "kills", profile.getKillCount(type));
-            yaml.set(path + "boss_kills", profile.getBossKills(type));
-
-            SlayerTask task = profile.getActiveTask(type);
-            if (task != null) {
-                yaml.set(path + "task.goal", task.getKillGoal());
-                yaml.set(path + "task.completed", task.getKillsCompleted());
-            } else {
-                yaml.set(path + "task", null); // clear any previously saved task
-            }
-        }
-
-        try {
-            yaml.save(file);
-        } catch (IOException e) {
-            plugin.getLogger().log(Level.SEVERE,
-                    "Failed to save slayer profile for " + profile.getPlayerUuid(), e);
-        }
+        databaseManager.saveProfile(profile);
     }
 
     /**
@@ -152,22 +92,11 @@ public class DataManager {
     }
 
     /**
-     * Removes the profile from cache AND deletes the data file from disk.
+     * Removes the profile from cache AND deletes its rows from the database.
      * Used by /slayadmin reset.
      */
     public void deleteProfile(UUID uuid) {
         profileCache.remove(uuid);
-        File file = profileFile(uuid);
-        if (file.exists() && !file.delete()) {
-            plugin.getLogger().warning("Could not delete profile file: " + file.getAbsolutePath());
-        }
-    }
-
-    // -------------------------------------------------------------------------
-    // Internal helpers
-    // -------------------------------------------------------------------------
-
-    private File profileFile(UUID uuid) {
-        return new File(dataFolder, uuid.toString() + ".yml");
+        databaseManager.deleteProfile(uuid);
     }
 }

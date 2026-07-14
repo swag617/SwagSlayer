@@ -5,6 +5,13 @@ general:
   # Each streak kill adds this fraction to the XP multiplier (e.g. 0.1 = +10% per kill, capped at 2.0x).
   combo_multiplier_per_streak: 0.1
 
+# Published on SwagAPI's event bus (discordutils:notify channel) when a boss is slain.
+# Requires DiscordUtils to be installed with a matching "webhooks.<webhook-name>" entry in
+# ITS config.yml — no compile-time or reflection dependency on DiscordUtils from this plugin.
+discord:
+  enabled: true
+  webhook-name: "slayer"
+
 slayer_types:
   # --- Easiest --- Common overworld mob, quick grind, low XP reward.
   ZOMBIE:

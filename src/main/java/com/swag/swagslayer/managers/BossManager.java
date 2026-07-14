@@ -220,7 +220,30 @@ public class BossManager {
                     + type.getDisplayName() + " boss — the owner received the reward.");
         }
 
+        publishDiscordNotify(ownerPlayer != null ? ownerPlayer.getName() : ownerStr, type, reward);
+
         return true;
+    }
+
+    /**
+     * Optional Discord announcement — DiscordUtils (if installed with a matching
+     * webhooks.* entry configured) picks this up with zero coupling here.
+     */
+    private void publishDiscordNotify(String ownerName, SlayerType type, int reward) {
+        if (!plugin.getConfig().getBoolean("discord.enabled", true)) return;
+        com.SwagDev.SwagAPI.api.IEventBusService bus = plugin.getBusService();
+        if (bus == null) return;
+
+        String webhookName = plugin.getConfig().getString("discord.webhook-name", "slayer");
+        Map<String, Object> data = new HashMap<>();
+        data.put("webhook", webhookName);
+        data.put("description", "**" + ownerName + "** slew the **" + type.getDisplayName()
+                + "** boss for " + reward + " XP!");
+        data.put("color", 0xAA0000);
+        data.put("username", "SwagSlayer");
+
+        bus.publish(new com.SwagDev.SwagAPI.events.SwagCrossPluginMessageEvent(
+                "discordutils:notify", "SwagSlayer", data, null));
     }
 
     // -------------------------------------------------------------------------

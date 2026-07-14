@@ -1,14 +1,12 @@
 package com.swag.swagslayer.managers;
 
 import com.swag.swagslayer.SwagSlayer;
+import com.swag.swagslayer.database.DatabaseManager;
 import com.swag.swagslayer.models.Contract;
 import com.swag.swagslayer.models.SlayerType;
 import org.bukkit.ChatColor;
-import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 
-import java.io.File;
-import java.io.IOException;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
@@ -16,7 +14,6 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Random;
 import java.util.UUID;
-import java.util.logging.Level;
 
 /**
  * Manages daily and weekly slayer contracts per player.
@@ -24,7 +21,11 @@ import java.util.logging.Level;
  * Daily contracts: 30–60 kills, 500 XP reward, resets at UTC midnight.
  * Weekly contracts: 200–400 kills, 3000 XP reward, resets Monday UTC midnight.
  *
- * Contracts are persisted in plugins/SwagSlayer/contracts/<uuid>.yml.
+ * MIGRATED: contracts used to be persisted in plugins/SwagSlayer/contracts/<uuid>.yml (one file
+ * per player, rewritten wholesale on every save). They are now persisted via DatabaseManager's
+ * slayer_contracts table (one row per uuid+"daily"/"weekly"), which upserts only the categories
+ * actually present rather than rewriting the whole record — see DatabaseManager.saveContracts()
+ * for why that's a meaningful behavior improvement, not just a storage swap.
  *
  * Kill routing always calls getDailyContract/getWeeklyContract (which
  * auto-refresh expired contracts) rather than reading the raw cache directly.
@@ -38,7 +39,7 @@ public class ContractManager {
 
     private final SwagSlayer plugin;
     private final DataManager dataManager;
-    private final File contractsFolder;
+    private final DatabaseManager databaseManager;
     private final Random random = new Random();
 
     private SlayerManager slayerManager; // setter-injected
@@ -46,13 +47,10 @@ public class ContractManager {
     private final Map<UUID, Contract> dailyContracts  = new HashMap<>();
     private final Map<UUID, Contract> weeklyContracts = new HashMap<>();
 
-    public ContractManager(SwagSlayer plugin, DataManager dataManager) {
+    public ContractManager(SwagSlayer plugin, DataManager dataManager, DatabaseManager databaseManager) {
         this.plugin = plugin;
         this.dataManager = dataManager;
-        this.contractsFolder = new File(plugin.getDataFolder(), "contracts");
-        if (!contractsFolder.exists() && !contractsFolder.mkdirs()) {
-            plugin.getLogger().warning("Could not create contracts directory.");
-        }
+        this.databaseManager = databaseManager;
     }
 
     public void setSlayerManager(SlayerManager slayerManager) {
@@ -139,53 +137,17 @@ public class ContractManager {
     // -------------------------------------------------------------------------
 
     private void saveContracts(UUID uuid) {
-        File file = new File(contractsFolder, uuid + ".yml");
-        YamlConfiguration yaml = new YamlConfiguration();
-        writeContract(yaml, "daily",  dailyContracts.get(uuid));
-        writeContract(yaml, "weekly", weeklyContracts.get(uuid));
-        try {
-            yaml.save(file);
-        } catch (IOException e) {
-            plugin.getLogger().log(Level.SEVERE, "Failed to save contracts for " + uuid, e);
-        }
+        databaseManager.saveContracts(uuid, dailyContracts.get(uuid), weeklyContracts.get(uuid));
     }
 
     private void loadContracts(UUID uuid) {
-        File file = new File(contractsFolder, uuid + ".yml");
-        if (!file.exists()) return;
-        YamlConfiguration yaml = YamlConfiguration.loadConfiguration(file);
-        Contract daily = readContract(yaml, "daily");
+        Map<String, Contract> loaded = databaseManager.loadContracts(uuid);
+
+        Contract daily = loaded.get("daily");
         if (daily != null && !daily.isExpired()) dailyContracts.put(uuid, daily);
-        Contract weekly = readContract(yaml, "weekly");
+
+        Contract weekly = loaded.get("weekly");
         if (weekly != null && !weekly.isExpired()) weeklyContracts.put(uuid, weekly);
-    }
-
-    private void writeContract(YamlConfiguration yaml, String key, Contract c) {
-        if (c == null) return;
-        yaml.set(key + ".type",            c.getType().name());
-        yaml.set(key + ".goal",            c.getKillGoal());
-        yaml.set(key + ".xp_reward",       c.getXpReward());
-        yaml.set(key + ".weekly",          c.isWeekly());
-        yaml.set(key + ".expires_at",      c.getExpiresAt());
-        yaml.set(key + ".kills_completed", c.getKillsCompleted());
-        yaml.set(key + ".completed",       c.isCompleted());
-    }
-
-    private Contract readContract(YamlConfiguration yaml, String key) {
-        if (!yaml.isConfigurationSection(key)) return null;
-        String typeName = yaml.getString(key + ".type", "");
-        SlayerType type = SlayerType.fromName(typeName);
-        if (type == null) return null;
-        Contract c = new Contract(
-                type,
-                yaml.getInt(key + ".goal"),
-                yaml.getInt(key + ".xp_reward"),
-                yaml.getBoolean(key + ".weekly"),
-                yaml.getLong(key + ".expires_at")
-        );
-        c.setKillsCompleted(yaml.getInt(key + ".kills_completed", 0));
-        c.setCompleted(yaml.getBoolean(key + ".completed", false));
-        return c;
     }
 
     // -------------------------------------------------------------------------

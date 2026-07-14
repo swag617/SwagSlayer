@@ -1,26 +1,29 @@
 package com.swag.swagslayer.managers;
 
 import com.swag.swagslayer.SwagSlayer;
+import com.swag.swagslayer.database.DatabaseManager;
 import com.swag.swagslayer.models.SlayerType;
 import org.bukkit.Bukkit;
 import org.bukkit.OfflinePlayer;
-import org.bukkit.configuration.file.YamlConfiguration;
 
-import java.io.File;
 import java.util.*;
 
 /**
  * Builds and caches top-10 leaderboards per SlayerType and an overall board.
  *
  * Refresh strategy:
- *   - Scans every .yml file in plugins/SwagSlayer/data/ on an async thread.
- *   - Parses XP values directly from YAML — no profile cache involvement.
+ *   - Queries DatabaseManager.loadAllXp() on an async thread. JDBC calls against SwagAPI's
+ *     pooled HikariCP connection are safe off the main thread, unlike direct Bukkit API access.
  *   - Once sorted, hands the resulting lists back to the main thread via runTask
  *     so that reads from the GUI (main thread) never race with the async write.
  *
  * The cached lists are replaced atomically (reference swap) so a GUI reading
  * a list mid-render always sees a consistent snapshot even if a refresh fires
  * concurrently.
+ *
+ * MIGRATED: this used to scan every .yml file in plugins/SwagSlayer/data/ directly, bypassing
+ * DataManager's cache entirely. It now reads the same slayer_profiles table DataManager writes
+ * to, via DatabaseManager.loadAllXp().
  */
 public class LeaderboardManager {
 
@@ -63,7 +66,7 @@ public class LeaderboardManager {
     // -------------------------------------------------------------------------
 
     private final SwagSlayer plugin;
-    private final File dataFolder;
+    private final DatabaseManager databaseManager;
 
     /**
      * Cached boards. Both reads and writes happen exclusively on the main server
@@ -73,10 +76,9 @@ public class LeaderboardManager {
     private List<LeaderboardEntry> overallBoard = Collections.emptyList();
     private final Map<SlayerType, List<LeaderboardEntry>> typeBoards = new HashMap<>();
 
-    public LeaderboardManager(SwagSlayer plugin, DataManager dataManager) {
+    public LeaderboardManager(SwagSlayer plugin, DatabaseManager databaseManager) {
         this.plugin = plugin;
-        // Mirror DataManager's data directory path.
-        this.dataFolder = new File(plugin.getDataFolder(), "data");
+        this.databaseManager = databaseManager;
 
         // Initialise type boards to empty so getTopForType never returns null.
         for (SlayerType type : SlayerType.values()) {
@@ -115,9 +117,9 @@ public class LeaderboardManager {
      */
     public void refreshLeaderboards() {
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
-            // ---- async: read every .yml in data/ ----
-            File[] files = dataFolder.listFiles((dir, name) -> name.endsWith(".yml"));
-            if (files == null || files.length == 0) {
+            // ---- async: query slayer_profiles via the shared HikariCP pool ----
+            List<DatabaseManager.XpRow> rows = databaseManager.loadAllXp();
+            if (rows.isEmpty()) {
                 // Nothing to rank — clear boards on main thread.
                 Bukkit.getScheduler().runTask(plugin, () -> {
                     overallBoard = Collections.emptyList();
@@ -128,31 +130,11 @@ public class LeaderboardManager {
                 return;
             }
 
-            // Map from UUID -> total XP per type, plus overall sum.
+            // Map from UUID -> XP per type, plus overall sum.
             // We accumulate raw data first, then resolve names and sort after.
             Map<UUID, Map<SlayerType, Integer>> rawData = new LinkedHashMap<>();
-
-            for (File file : files) {
-                String fileName = file.getName();
-                // File name is <uuid>.yml — strip extension.
-                String uuidStr = fileName.substring(0, fileName.length() - 4);
-                UUID uuid;
-                try {
-                    uuid = UUID.fromString(uuidStr);
-                } catch (IllegalArgumentException e) {
-                    // Not a player data file — skip.
-                    continue;
-                }
-
-                YamlConfiguration yaml = YamlConfiguration.loadConfiguration(file);
-                if (!yaml.isConfigurationSection("slayer")) continue;
-
-                Map<SlayerType, Integer> typeXp = new EnumMap<>(SlayerType.class);
-                for (SlayerType type : SlayerType.values()) {
-                    int xp = yaml.getInt("slayer." + type.name() + ".xp", 0);
-                    typeXp.put(type, xp);
-                }
-                rawData.put(uuid, typeXp);
+            for (DatabaseManager.XpRow row : rows) {
+                rawData.computeIfAbsent(row.uuid, k -> new EnumMap<>(SlayerType.class)).put(row.type, row.xp);
             }
 
             // Build sorted per-type lists (top TOP_SIZE).

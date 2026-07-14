@@ -6,7 +6,7 @@
 
     <groupId>com.swag</groupId>
     <artifactId>SwagSlayer</artifactId>
-    <version>1.0-SNAPSHOT</version>
+    <version>1.1.0</version>
     <packaging>jar</packaging>
 
     <name>SwagSlayer</name>
@@ -30,6 +30,16 @@
             <artifactId>paper-api</artifactId>
             <version>1.21.1-R0.1-SNAPSHOT</version>
             <scope>provided</scope>
+        </dependency>
+
+        <!-- SwagAPI (hard dep, system scope) — shared services: database, economy, player data, event bus.
+             NOT shaded into this jar; SwagAPI runs as its own plugin on the server. -->
+        <dependency>
+            <groupId>com.SwagDev</groupId>
+            <artifactId>SwagAPI</artifactId>
+            <version>1.0.0</version>
+            <scope>system</scope>
+            <systemPath>${project.basedir}/libs/SwagAPI-1.0.0.jar</systemPath>
         </dependency>
     </dependencies>
 
