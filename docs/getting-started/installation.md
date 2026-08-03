@@ -10,14 +10,15 @@ Before installing SwagSlayer, ensure your server meets these requirements:
 * **Permissions Plugin:** Any (LuckPerms recommended)
 
 ### Dependencies
-SwagSlayer has **no external plugin dependencies**. Drop the jar and go.
+SwagSlayer has a **hard dependency on [SwagAPI](https://github.com/swag617/SwagAPI)**, which provides the shared database service all player data is stored in. Install SwagAPI first — SwagSlayer disables itself on startup if SwagAPI's `IDatabaseService` isn't registered.
 
 ## Quick Installation
 
 ### Step 1: Download Plugin
 
-1. Download the latest `SwagSlayer.jar` from the GitHub releases page
-2. Verify the file is for your Minecraft version
+1. Install [SwagAPI](https://github.com/swag617/SwagAPI) first — SwagSlayer will not enable without it.
+2. Download the latest `SwagSlayer.jar` from the GitHub releases page
+3. Verify the file is for your Minecraft version
 
 ### Step 2: Install Plugin
 
@@ -27,7 +28,7 @@ SwagSlayer has **no external plugin dependencies**. Drop the jar and go.
 
 The plugin will automatically:
 * Generate `config.yml` with default values
-* Create the player data directory
+* Connect to SwagAPI's shared database and create its tables (`slayer_profiles`, `slayer_contracts`)
 * Load all four slayer types
 
 ### Step 3: Verify Installation
@@ -58,26 +59,22 @@ After installation, you'll find:
 
 ```
 plugins/SwagSlayer/
-├── config.yml           # Main configuration (XP, thresholds, combo settings)
-└── data/                # Per-player JSON profiles
-    ├── <uuid>.json
-    └── ...
+└── config.yml           # Main configuration (XP, thresholds, combo settings)
 ```
+
+Player data (levels, XP, kill counts, active tasks/contracts) is **not** stored as local files — it lives in SwagAPI's shared database, in the `slayer_profiles` and `slayer_contracts` tables. If you're upgrading from a version that predates the SwagAPI migration, any existing `plugins/SwagSlayer/data/*.yml` and `contracts/*.yml` files are automatically imported into the shared database the first time the new version starts.
 
 ## Updating
 
 ### From an Earlier Version
 
 1. **Stop server**
-2. **Back up your data folder:**
-   ```
-   plugins/SwagSlayer/data/
-   ```
+2. **Back up your database** (SwagAPI's SQLite file, or your MySQL database, depending on how SwagAPI is configured)
 3. Replace `SwagSlayer.jar`
 4. **Start server**
 5. Check console for any warnings
 
-> **Always back up player data before updating!**
+> **Always back up your database before updating!**
 
 ## Troubleshooting Installation
 
@@ -105,9 +102,9 @@ plugins/SwagSlayer/
 **Issue:** Player stats reset on relog
 
 **Solutions:**
-1. Check that the `plugins/SwagSlayer/data/` directory exists and is writable
-2. Look for `IOException` or `FileNotFoundException` in console at shutdown
-3. Ensure the server has write permissions to the plugins folder
+1. Confirm SwagAPI is installed and loaded **before** SwagSlayer — check the console for "Hooked SwagAPI IDatabaseService." on startup
+2. Look for SQL exceptions in console during gameplay or at shutdown
+3. Verify SwagAPI's own database configuration (SQLite file path or MySQL credentials) is correct and writable
 
 ## Next Steps
 

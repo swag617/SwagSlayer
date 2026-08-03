@@ -56,13 +56,13 @@ slayer_types:
     display_name: "Zombie Slayer"
     boss_mob: "ZOMBIE"
     kill_threshold_per_level:
-      - 20
-      - 50
-      - 100
-      - 200
-      - 500
-    xp_per_kill: 10
-    boss_xp_reward: 100
+      - 15
+      - 40
+      - 80
+      - 150
+      - 300
+    xp_per_kill: 8
+    boss_xp_reward: 80
 ```
 
 ### `display_name`
@@ -88,21 +88,43 @@ Valid values for current types:
 ### `kill_threshold_per_level`
 
 **Type:** List of Integers  
-**Description:** Number of kills required (cumulative from level 1) to advance each level. The list must contain at least `max_level` entries.
+**Description:** Number of kills required to advance **from that level to the next** (a delta, not a running total). The list must contain at least `max_level` entries.
 
-The plugin reads entries at index `[0]` through `[max_level - 1]`. The threshold for level N → N+1 is the **sum** of entries `[0]` through `[N-1]`.
+The plugin reads entries at index `[0]` through `[max_level - 1]`. The XP threshold for level N → N+1 is the **sum** of entries `[0]` through `[N-1]`, multiplied by `xp_per_kill`.
 
 ### `xp_per_kill`
 
 **Type:** Integer  
-**Default:** `10`  
+**Default:** `8` (Zombie) — varies per type; see Full Example below  
 **Description:** Base XP earned per qualifying kill before the combo multiplier is applied.
 
 ### `boss_xp_reward`
 
 **Type:** Integer  
-**Default:** `100`  
+**Default:** `80` (Zombie) — varies per type; see Full Example below  
 **Description:** Bonus XP awarded to the player when they complete a kill task for this type.
+
+## `discord` Section
+
+Controls the optional boss-kill notification published on SwagAPI's shared event bus.
+
+```yaml
+discord:
+  enabled: true
+  webhook-name: "slayer"
+```
+
+### `discord.enabled`
+
+**Type:** Boolean  
+**Default:** `true`  
+**Description:** Whether a boss-kill event is published to SwagAPI's event bus (`discordutils:notify` channel) at all.
+
+### `discord.webhook-name`
+
+**Type:** String  
+**Default:** `"slayer"`  
+**Description:** Must match a `webhooks.<name>` entry in [DiscordUtils](https://github.com/swag617/DiscordUtils)' own `config.yml`. SwagSlayer has no compile-time or reflection dependency on DiscordUtils — it only publishes to the shared event bus, so nothing breaks if DiscordUtils isn't installed; the notification is simply never delivered.
 
 ## Full Example
 
@@ -112,18 +134,22 @@ general:
   combo_timeout_seconds: 10
   combo_multiplier_per_streak: 0.1
 
+discord:
+  enabled: true
+  webhook-name: "slayer"
+
 slayer_types:
   ZOMBIE:
     display_name: "Zombie Slayer"
     boss_mob: "ZOMBIE"
     kill_threshold_per_level:
-      - 20
-      - 50
-      - 100
-      - 200
-      - 500
-    xp_per_kill: 10
-    boss_xp_reward: 100
+      - 15
+      - 40
+      - 80
+      - 150
+      - 300
+    xp_per_kill: 8
+    boss_xp_reward: 80
 
   SPIDER:
     display_name: "Spider Slayer"
@@ -133,33 +159,33 @@ slayer_types:
       - 50
       - 100
       - 200
-      - 500
+      - 400
     xp_per_kill: 10
-    boss_xp_reward: 100
+    boss_xp_reward: 120
 
   SKELETON:
     display_name: "Skeleton Slayer"
     boss_mob: "SKELETON"
     kill_threshold_per_level:
-      - 20
-      - 50
-      - 100
-      - 200
+      - 25
+      - 60
+      - 120
+      - 250
       - 500
-    xp_per_kill: 10
-    boss_xp_reward: 100
+    xp_per_kill: 12
+    boss_xp_reward: 150
 
   CREEPER:
     display_name: "Creeper Slayer"
     boss_mob: "CREEPER"
     kill_threshold_per_level:
-      - 20
-      - 50
-      - 100
-      - 200
-      - 500
-    xp_per_kill: 10
-    boss_xp_reward: 100
+      - 30
+      - 70
+      - 150
+      - 300
+      - 600
+    xp_per_kill: 15
+    boss_xp_reward: 200
 ```
 
 ## Related Pages

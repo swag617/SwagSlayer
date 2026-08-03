@@ -12,19 +12,28 @@ general:
   # Each streak kill adds this fraction to the XP multiplier (e.g. 0.1 = +10% per kill, capped at 2.0x).
   combo_multiplier_per_streak: 0.1
 
+# Published on SwagAPI's event bus (discordutils:notify channel) when a boss is slain.
+# Requires DiscordUtils to be installed with a matching "webhooks.<webhook-name>" entry in
+# ITS config.yml — no compile-time or reflection dependency on DiscordUtils from this plugin.
+discord:
+  enabled: true
+  webhook-name: "slayer"
+
 slayer_types:
+  # --- Easiest --- Common overworld mob, quick grind, low XP reward.
   ZOMBIE:
     display_name: "Zombie Slayer"
     boss_mob: "ZOMBIE"
     kill_threshold_per_level:
-      - 20
-      - 50
-      - 100
-      - 200
-      - 500
-    xp_per_kill: 10
-    boss_xp_reward: 100
+      - 15
+      - 40
+      - 80
+      - 150
+      - 300
+    xp_per_kill: 8
+    boss_xp_reward: 80
 
+  # --- Medium --- Cave and surface mob, moderate challenge.
   SPIDER:
     display_name: "Spider Slayer"
     boss_mob: "SPIDER"
@@ -33,33 +42,35 @@ slayer_types:
       - 50
       - 100
       - 200
-      - 500
+      - 400
     xp_per_kill: 10
-    boss_xp_reward: 100
+    boss_xp_reward: 120
 
+  # --- Harder --- Ranged attacker, higher XP reward for the risk.
   SKELETON:
     display_name: "Skeleton Slayer"
     boss_mob: "SKELETON"
     kill_threshold_per_level:
-      - 20
-      - 50
-      - 100
-      - 200
+      - 25
+      - 60
+      - 120
+      - 250
       - 500
-    xp_per_kill: 10
-    boss_xp_reward: 100
+    xp_per_kill: 12
+    boss_xp_reward: 150
 
+  # --- Hardest --- Explosive mob, highest XP but most dangerous grind.
   CREEPER:
     display_name: "Creeper Slayer"
     boss_mob: "CREEPER"
     kill_threshold_per_level:
-      - 20
-      - 50
-      - 100
-      - 200
-      - 500
-    xp_per_kill: 10
-    boss_xp_reward: 100
+      - 30
+      - 70
+      - 150
+      - 300
+      - 600
+    xp_per_kill: 15
+    boss_xp_reward: 200
 ```
 
 ## General Settings
@@ -69,6 +80,13 @@ slayer_types:
 | `max_level` | `5` | Maximum level a player can reach per slayer type |
 | `combo_timeout_seconds` | `10` | Seconds of inactivity before the combo streak resets to 1 |
 | `combo_multiplier_per_streak` | `0.1` | XP multiplier bonus added per streak kill (capped at 2.0×) |
+
+## Discord Settings
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `discord.enabled` | `true` | Whether a boss-kill notification is published on SwagAPI's event bus (`discordutils:notify` channel) |
+| `discord.webhook-name` | `"slayer"` | Must match a `webhooks.<name>` entry in [DiscordUtils](https://github.com/swag617/DiscordUtils)' own `config.yml`. SwagSlayer has no compile-time or reflection dependency on DiscordUtils — it only publishes to SwagAPI's shared event bus, so if DiscordUtils isn't installed the message is simply never delivered. |
 
 ### Combo Formula
 
@@ -93,26 +111,26 @@ Each type under `slayer_types` supports:
 
 ### Kill Thresholds Explained
 
-The `kill_threshold_per_level` list is **cumulative** — each entry is the total kills needed since level 1 to reach the next level:
+Each entry in `kill_threshold_per_level` is the number of kills required to advance **from that level to the next** (not a running total). The plugin sums the entries internally to determine cumulative XP thresholds. Using the Zombie Slayer defaults:
 
 ```yaml
 kill_threshold_per_level:
-  - 20    # kills to reach Level 2  (total: 20)
-  - 50    # kills to reach Level 3  (total: 70)
-  - 100   # kills to reach Level 4  (total: 170)
-  - 200   # kills to reach Level 5  (total: 370)
-  - 500   # (unused at max_level=5, but kept for consistency)
+  - 15    # kills to reach Level 2  (cumulative: 15)
+  - 40    # kills to reach Level 3  (cumulative: 55)
+  - 80    # kills to reach Level 4  (cumulative: 135)
+  - 150   # kills to reach Level 5  (cumulative: 285)
+  - 300   # (unused at max_level=5, but kept for consistency)
 ```
 
-With `xp_per_kill: 10`:
-* Level 1 → 2: 200 XP
-* Level 2 → 3: 500 XP
-* Level 3 → 4: 1000 XP
-* Level 4 → 5: 2000 XP
+With `xp_per_kill: 8`:
+* Level 1 → 2: 120 XP
+* Level 2 → 3: 320 XP
+* Level 3 → 4: 640 XP
+* Level 4 → 5: 1200 XP
 
 ## Example: Harder Progression
 
-To make leveling more grindy:
+To make leveling more grindy, e.g. for Zombie Slayer:
 
 ```yaml
 general:

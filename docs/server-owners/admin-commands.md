@@ -126,7 +126,7 @@ Reset all slayer data for Steve.
 Your slayer data has been reset by an admin.
 ```
 
-> **This action is irreversible.** Make sure you have a backup of the player's data file in `plugins/SwagSlayer/data/<uuid>.json` before resetting.
+> **This action is irreversible.** Make sure you have a backup of SwagAPI's shared database before resetting — the player's rows in `slayer_profiles` (and `slayer_contracts`, if applicable) are deleted immediately.
 
 ## Valid Slayer Types
 

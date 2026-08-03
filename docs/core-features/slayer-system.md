@@ -21,14 +21,16 @@ Every type starts at **Level 1** and caps at **Level 5** (configurable). Levels 
 
 ### Default Kill Thresholds
 
-| Level Up | Kills Required | Cumulative Kills | XP Required |
-|----------|---------------|-----------------|-------------|
-| 1 → 2 | 20 | 20 | 200 |
-| 2 → 3 | 50 | 70 | 700 |
-| 3 → 4 | 100 | 170 | 1,700 |
-| 4 → 5 | 200 | 370 | 3,700 |
+Each type has its own kill thresholds and `xp_per_kill` in `config.yml` — harder types require more kills per level but reward more XP per kill:
 
-> With default `xp_per_kill: 10`. Actual XP to level also depends on your combo multiplier.
+| Type | `xp_per_kill` | 1→2 | 2→3 | 3→4 | 4→5 |
+|------|--------------|-----|-----|-----|-----|
+| Zombie Slayer | 8 | 15 | 40 | 80 | 150 |
+| Spider Slayer | 10 | 20 | 50 | 100 | 200 |
+| Skeleton Slayer | 12 | 25 | 60 | 120 | 250 |
+| Creeper Slayer | 15 | 30 | 70 | 150 | 300 |
+
+> Kills-required values above are the delta needed for that specific level-up (kills required to advance from level N to N+1), not a cumulative total. The XP threshold to reach a given level is the sum of all prior thresholds multiplied by `xp_per_kill`. Actual XP earned per kill also depends on your combo multiplier — see [Combo Streak](combo-streak.md).
 
 ## XP
 

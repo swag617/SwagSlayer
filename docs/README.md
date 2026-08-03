@@ -36,7 +36,7 @@ Kill thresholds, XP per kill, boss XP rewards, combo timeout, and multiplier ste
 
 ## Development Status
 
-> **Version:** 1.0.0 &nbsp;|&nbsp; **Minecraft:** 1.21+ (Paper/Spigot) &nbsp;|&nbsp; **Status:** Active Development
+> **Version:** 1.1.0 &nbsp;|&nbsp; **Minecraft:** 1.21+ (Paper/Spigot) &nbsp;|&nbsp; **Status:** Active Development
 
 <div style="background:#161616;border:1px solid #2a2a2a;border-radius:14px;padding:28px 28px 22px;margin:8px 0 28px;font-family:inherit">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">

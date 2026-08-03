@@ -1,4 +1,4 @@
-# SwagSlayer <small>v1.0.0</small>
+# SwagSlayer <small>v1.1.0</small>
 
 > A custom mob-slayer progression system for Minecraft — track kills, level up per mob type, earn combo XP, and complete slayer tasks.
 

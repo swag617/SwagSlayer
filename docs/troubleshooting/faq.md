@@ -6,7 +6,7 @@ Frequently asked questions about SwagSlayer.
 
 ### Does SwagSlayer require any other plugins?
 
-No. SwagSlayer has zero external dependencies. Drop the jar into your `plugins/` folder and start the server.
+Yes — [SwagAPI](https://github.com/swag617/SwagAPI) is a hard dependency. It provides the shared database service all player data is stored in; SwagSlayer disables itself at startup if SwagAPI isn't loaded.
 
 ### What Minecraft versions are supported?
 
@@ -14,7 +14,7 @@ SwagSlayer targets **Paper/Spigot 1.21+**. It may work on earlier 1.20.x version
 
 ### Does SwagSlayer work with proxy setups (BungeeCord / Velocity)?
 
-SwagSlayer runs purely on the backend (game) server and stores data locally in `plugins/SwagSlayer/data/`. If you run multiple backend servers, player data is **not shared** between them — each backend has its own profile store. Cross-server sync is not currently supported.
+SwagSlayer stores player data in SwagAPI's shared database rather than local files. If each backend server points at its own SwagAPI database (e.g. separate SQLite files, or separate MySQL schemas), player data is **not shared** between them. Pointing multiple backends at the same MySQL database via SwagAPI's config would share data between them, but this isn't an officially tested configuration.
 
 ---
 
@@ -78,7 +78,7 @@ Not without modifying the source code. The `SlayerType` enum is defined in Java 
 
 ### How do I back up player data?
 
-Copy the entire `plugins/SwagSlayer/data/` directory. Each player's profile is stored as `<uuid>.json` and can be restored by placing it back in the same directory.
+Back up SwagAPI's underlying database (its SQLite file, or your MySQL database, depending on how SwagAPI is configured). SwagSlayer's rows live in the `slayer_profiles` and `slayer_contracts` tables within it.
 
 ### Does `/slayadmin reload` require a restart?
 
